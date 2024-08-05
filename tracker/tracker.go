@@ -325,19 +325,21 @@ func (t *Tracker) findAncestor(block, pivot *ethgo.Block) (uint64, error) {
 			// this is the common ancestor in both
 			return block.Number, nil
 		}
-		block, err = t.provider.GetBlockByHash(block.ParentHash, false)
+		var blockParentHash = block.ParentHash
+		block, err = t.provider.GetBlockByHash(blockParentHash, false)
 		if err != nil {
 			return 0, err
 		} else if block == nil {
 			// if block does not exist (for example reorg happened) GetBlockByNumber will return nil, nil
-			return 0, fmt.Errorf("block with hash %s not found", block.ParentHash)
+			return 0, fmt.Errorf("block with hash %s not found", blockParentHash)
 		}
-		pivot, err = t.provider.GetBlockByHash(pivot.ParentHash, false)
+		var pivotParentHash = pivot.ParentHash
+		pivot, err = t.provider.GetBlockByHash(pivotParentHash, false)
 		if err != nil {
 			return 0, err
 		} else if pivot == nil {
 			// if block does not exist (for example reorg happened) GetBlockByNumber will return nil, nil
-			return 0, fmt.Errorf("block/pivot with hash %s not found", pivot.ParentHash)
+			return 0, fmt.Errorf("block/pivot with hash %s not found", pivotParentHash)
 		}
 	}
 	return 0, fmt.Errorf("the reorg is bigger than maxBlockBacklog %d", t.blockTracker.MaxBlockBacklog())
