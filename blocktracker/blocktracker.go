@@ -347,6 +347,10 @@ func (k *JSONBlockTracker) Track(ctx context.Context, handle func(block *ethgo.B
 				return err
 			}
 
+			if block == nil {
+				continue
+			}
+
 			if lastBlock != nil && lastBlock.Hash == block.Hash {
 				continue
 			}
