@@ -610,6 +610,49 @@ func (t *Tracker) Sync(ctx context.Context) error {
 	}
 }
 
+// Add this new method to the Tracker struct
+
+func (t *Tracker) rollbackToChainState(targetNum uint64) error {
+	// Get the current last block from the store
+	last, err := t.GetLastBlock()
+	if err != nil {
+		return fmt.Errorf("failed to get last block: %v", err)
+	}
+
+	if last == nil || last.Number <= targetNum {
+		// No need to rollback
+		return nil
+	}
+
+	// Rollback the stored data
+	for last.Number > targetNum {
+		// Remove logs for this block
+		logs, err := t.removeLogs(last.Number, nil)
+		if err != nil {
+			return fmt.Errorf("failed to remove logs: %v", err)
+		}
+		t.emitLogs(EventDel, logs)
+
+		// Get the previous block
+		prevBlock, err := t.getBlockByNumber(last.Number - 1)
+		if err != nil {
+			return fmt.Errorf("failed to get previous block: %v", err)
+		}
+
+		// Update the last block in the store
+		if err := t.storeLastBlock(prevBlock); err != nil {
+			return fmt.Errorf("failed to store last block: %v", err)
+		}
+
+		last = prevBlock
+	}
+
+	t.logger.Printf("Rolled back stored data from block %d to %d", last.Number, targetNum)
+	return nil
+}
+
+// Modify the syncImpl method to use the recovery mechanism
+
 func (t *Tracker) syncImpl(ctx context.Context) error {
 	if err := t.preSyncCheck(); err != nil {
 		return err
@@ -668,7 +711,16 @@ func (t *Tracker) syncImpl(ctx context.Context) error {
 	var origin uint64
 	if last != nil {
 		if last.Number > targetNum {
-			return fmt.Errorf("store is more advanced than the chain")
+			t.logger.Printf("Store is more advanced than the chain. Rolling back...")
+
+			if err := t.rollbackToChainState(targetNum); err != nil {
+				return fmt.Errorf("failed to rollback: %v", err)
+			}
+			// Refresh the last block after rollback
+			last, err = t.GetLastBlock()
+			if err != nil {
+				return fmt.Errorf("failed to get last block after rollback: %v", err)
+			}
 		}
 
 		pivot, err := t.getBlockByNumber(last.Number)
