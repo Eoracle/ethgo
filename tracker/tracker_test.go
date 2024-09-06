@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"encoding/hex"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/umbracle/ethgo"
@@ -772,4 +773,68 @@ func TestTooMuchDataRequested(t *testing.T) {
 	if count != len(tt.entry.(*inmem.Entry).Logs()) {
 		t.Fatal("not the same count")
 	}
+}
+
+func TestRollbackToChainState(t *testing.T) {
+	store := inmem.NewInmemStore()
+	m := &testutil.MockClient{}
+
+	// Create a mock scenario with 20 blocks
+	l := testutil.MockList{}
+	l.Create(0, 20, func(b *testutil.MockBlock) {
+		b.Log(fmt.Sprintf("%02x", b.GetNum())) // Use two-digit hex representation
+	})
+	m.AddScenario(l)
+
+	tt, err := NewTracker(m,
+		testConfig(),
+		WithStore(store),
+		WithFilter(&FilterConfig{Async: true}),
+	)
+	require.NoError(t, err)
+
+	// Sync the tracker to block 20
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err = tt.BatchSync(ctx)
+	require.NoError(t, err)
+
+	// Verify initial state
+	lastBlock, err := tt.GetLastBlock()
+	require.NoError(t, err)
+	assert.Equal(t, uint64(19), lastBlock.Number)
+	assert.Equal(t, 20, len(tt.entry.(*inmem.Entry).Logs()))
+
+	// Test rollback to block 15
+	targetNum := uint64(15)
+	err = tt.rollbackToChainState(targetNum)
+	require.NoError(t, err)
+
+	// Verify state after rollback
+	lastBlock, err = tt.GetLastBlock()
+	require.NoError(t, err)
+	assert.Equal(t, targetNum, lastBlock.Number)
+
+	logs := tt.entry.(*inmem.Entry).Logs()
+	assert.Equal(t, 16, len(logs)) // Blocks 0 to 15 inclusive
+	for i, log := range logs {
+		expected := fmt.Sprintf("%02x", i)
+		actual := hex.EncodeToString(log.Data)
+		assert.Equal(t, expected, actual, fmt.Sprintf("Log data mismatch for block %d", i))
+	}
+
+	// Test rollback to a block higher than current (should do nothing)
+	err = tt.rollbackToChainState(targetNum + 1)
+	require.NoError(t, err)
+	lastBlock, err = tt.GetLastBlock()
+	require.NoError(t, err)
+	assert.Equal(t, targetNum, lastBlock.Number)
+
+	// Test rollback to block 0
+	err = tt.rollbackToChainState(0)
+	require.NoError(t, err)
+	lastBlock, err = tt.GetLastBlock()
+	require.NoError(t, err)
+	assert.Equal(t, uint64(0), lastBlock.Number)
+	assert.Equal(t, 1, len(tt.entry.(*inmem.Entry).Logs())) // Only genesis block log
 }
